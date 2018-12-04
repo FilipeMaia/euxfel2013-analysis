@@ -337,7 +337,7 @@ class SprModelRadial:
         # the second min by dip
         i2 = i[idx[1]] if i.size > 1 else chi2.max()
         
-        good = (R[i1] > Rmn) and (chi2[i1] < 0.9 * chi2_max) and (chi2[i1] < 5.)
+        good = (R[i1] > Rmn) and (chi2[i1] < 0.9 * chi2_max) and (chi2[i1] < 10.)
             
         
 #        ij = np.concatenate([i, j])

@@ -7,7 +7,7 @@ from .utils import *
 class SprModel:
     def __init__(self, ri, vi, bi, si, ei, lmd, l, n=[.0, .0]):
         self.n = vi.size
-        
+         
         a = re * math.pi
         self.a = (5./6.) * a * a * l[0] * l[1]
         self.b = math.pi / lmd
