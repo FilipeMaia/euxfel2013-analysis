@@ -1,3 +1,5 @@
+# Author: Egor Sobolev (https://github.com/egorsobolev)
+
 from __future__ import print_function
 
 import math
@@ -10,7 +12,7 @@ from scipy.stats import binned_statistic_2d, iqr, poisson, binom, erlang, planck
 import h5py
 
 import matplotlib.pylab as plt
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm, SymLogNorm
 from matplotlib.ticker import ScalarFormatter, LogFormatterExponent
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -76,7 +78,7 @@ class SprFitSet:
                 npnt = f['sphr/np'][:]
                 chi2 = f['sphr/chi2'][:]
                 param = f['sphr/param'][:,:]
-                param[:,1] /= asf2
+                param[:,2] /= asf2
 
     
                 goodi, = np.where(np.logical_and(chi2 <= x2mx, param[:,3] >= 650.))
@@ -100,11 +102,11 @@ class SprFitSet:
                 intens = f['sphr/en'][:]
                 nhit = hiti.max()
                 
-            #with h5py.File('hits/hits-r{:04d}.h5'.format(run), 'r') as f:
+            #with h5py.File('../../../hits/hits-r{:04d}.h5'.format(run), 'r') as f:
             #    cellid = f['hits/cellId'][:]
             #    trainid = f['hits/trainId'][:]
             #    trmin = np.min(trainid)
-                
+               
             #    cellid = cellid[hiti]
             #    cell = (cellid - 2) // 2
             #    train = trainid[hiti] - trmin
@@ -122,12 +124,12 @@ class SprFitSet:
             #    j = intens > 0
                 
             #    #print(intens[intens<0])
-            #    
+                
             #    #intens[j] = intens[j]
             #    intens[np.logical_not(j)] = -1.
             
 
-            Imx = np.max(param[goodi,1])
+            Imx = np.max(param[goodi,2])
             print(" {:6d} {:6d} {:6.1f} {:5d}   {:6.2f}".format(ngood, nhit, 100.*ngood / nhit, ncell, Imx))
             G.append(np.ones(ngood, dtype=int) * grp)
             J.append(hiti)
@@ -224,20 +226,21 @@ class SprFitSet:
         trainid = self.run * self.ntrain + self.train
         
         nmx = np.max(self.ncell)
+        nmx=31
         #nn[0] = self.ntrain * self.nrun - np.sum(nn[1:])
 
         mu = np.empty(self.nrun, dtype=float)
-        n = np.empty([self.nrun, nmx], dtype=int)
+        n = np.empty([self.nrun, nmx], dtype=float)
         p = np.empty([self.nrun, nmx], dtype=float)
         x = np.arange(nmx, dtype=int)
         for j in range(self.nrun):
-            mu[j] = self.nfit[j] / self.ntrain
+            mu[j] = float(self.nfit[j]) / self.ntrain /30.
 
             nn = np.unique(self.train[self.run == j], return_counts=True)[1]
             
-            n[j,:] = np.bincount(nn, minlength=nmx)
+            n[j,:] = np.bincount(nn, minlength=nmx).astype(float)# / self.ntrain
             #n[j,n[j,:] < 5] = 0
-            p[j,:] = poisson.pmf(x, mu[j]) * self.ntrain
+            p[j,:] = binom.pmf(x, 30, mu[j]) * self.ntrain
             #kmx = np.where(p[j,:] < .5)[0][0]
             #n[j,kmx] = np.sum(n[j,kmx:])
             #n[j,kmx:] = 0
@@ -283,7 +286,7 @@ class SprFitSet:
             q = np.subtract(*np.meshgrid(bins, pk, indexing='ij'))
             h = 0.5*(1 + erf(q/np.sqrt(2.*spk)))
 
-            h = np.mean(h,1)
+            h = np.sum(h,1)
             H[i,:] = h[1:]-h[:-1]
             
             #d = np.histogram(Ik, bins=bins, density=True)[0]
@@ -351,21 +354,27 @@ class SprFitSet:
         
         C0 = np.triu(K)
         std_r0 = np.sqrt(np.diag(K) / (n - 1))
+        print(r0)
         
         return r0, C0, n
     
-    def get_center_distribution(self, pid, statistics, i=None, k=1e6, d=1, ranges=None):
+    def get_center_distribution(self, pid, statistics, i=None, k=1e6, d=1, ranges=None, rad=True):
         if i is None:
             i = np.arange(self.P.shape[0], dtype=int)
                      
-        r0, C0, n = self.mean_center(i)
+        #r0, C0, n = self.mean_center(i)
+        n = i.size
+        r0 = self.P[i,4:].mean(0)
         
 #        if weights is None:
 #            weights = np.ones(n, dtype=float)
         
         v = self.P[i,pid]
         ri = self.P[i,4:] - r0
-        #ai = np.arctan2(ri * self.l, self.L) * k
+        if rad:
+            ai = np.arctan2(ri * self.l, self.L) * k
+        else:
+            ai = np.copy(ri)
         
         if ranges is None:
             ranges = (
@@ -375,7 +384,7 @@ class SprFitSet:
         #amx = np.max(np.abs(ai))
         #amx = 750.0
         
-        nbin = int(4*n**(1./3.)) / d
+        nbin = int(4*n**(1./3.) / d )
         
         
         #bins = np.geomspace(np.sqrt(amx)/nbin, amx, nbin//2) 
@@ -384,7 +393,7 @@ class SprFitSet:
         #bins_x = np.linspace(-amx, amx, nbin)
         bins_x = np.linspace(ranges[0][0], ranges[0][1], nbin)
         bins_y = np.linspace(ranges[1][0], ranges[1][1], nbin)
-        H, x_edge, y_edge, idx = binned_statistic_2d(ri[:,1], ri[:,0], v, statistics, bins=(bins_y,bins_x))#[0::3]
+        H, x_edge, y_edge, idx = binned_statistic_2d(ai[:,0], ai[:,1], v, statistics, bins=(bins_x,bins_y))#[0::3]
         
         #print(H.shape)
         
@@ -395,8 +404,14 @@ class SprFitSet:
         
         return H, D, bins_x, bins_y
     
-    def get_bandwidth_center_dist(self, k, pi, bins=10):
+    def get_bandwidth_center_dist(self, k, pi, bins=10, rad=True):
         x0, y0 = np.median(self.P[k,4]), np.median(self.P[k,5])
+        
+        ri = self.P[k,4:] - (x0, y0)
+        if rad:
+            ai = np.arctan2(ri * self.l, self.L) * 1e6
+        else:
+            ai = np.copy(ri)
 
         rmin, rmax = self.P[k,pi].min(), self.P[k,pi].max()
         rst = np.geomspace(rmin,rmax,bins)
@@ -408,20 +423,23 @@ class SprFitSet:
         drst = []
 
         for i in range(bins-1):
-            l = k[np.where(np.logical_and(self.P[k,pi]>rst[i],self.P[k,pi]<=rst[i+1]))[0]]
+            #l = k[]
+            l = np.where(np.logical_and(self.P[k,pi]>rst[i],self.P[k,pi]<=rst[i+1]))[0]
             if not l.size:
                 continue
-            hx.append(self.P[l,4]-x0)
-            hy.append(self.P[l,5]-y0)
-            pos.append(np.mean(self.P[l,pi]))
+            #hx.append(self.P[l,4]-x0)
+            #hy.append(self.P[l,5]-y0)
+            hx.append(ai[l,0])
+            hy.append(ai[l,1])
+            pos.append(np.mean(self.P[k[l],pi]))
             drst.append(rst[i+1]-rst[i])
             
         return np.array(hx), np.array(hy), np.array(pos), np.array(drst), (x0, y0)
 
-    def plot_bandwidth_dist(self, ax, k, rlim, ilim, plim, labelleft=True):
+    def plot_bandwidth_dist(self, ax, k, rlim, ilim, plim, labelleft=True, rad=True):
         # particle size
 
-        datx, daty, pos, drst, r0 = self.get_bandwidth_center_dist(k, 3)
+        datx, daty, pos, drst, r0 = self.get_bandwidth_center_dist(k, 3, rad=rad)
         x0, y0 = r0
  
 
@@ -434,7 +452,7 @@ class SprFitSet:
         axi.spines['right'].set_visible(False)
         axi.spines['top'].set_visible(False)
         if labelleft:
-            axi.set_ylabel('$R$, \AA')
+            axi.set_ylabel('$R\ (\mathrm{nm})$')
         else:
             axi.tick_params(labelleft=False)
         #axi.set_xlabel('$x$, pixel')
@@ -462,10 +480,13 @@ class SprFitSet:
         axi.spines['right'].set_visible(False)
         axi.spines['top'].set_visible(False)
         if labelleft:
-            axi.set_ylabel('$I^0$, photons/\AA$^2$')
+            axi.set_ylabel('$I^0\ (\mathrm{photons}\cdot\mu\mathrm{m}^{-2})$')
         else:
             axi.tick_params(labelleft=False)
-        axi.set_xlabel('$x$, pixel')
+        if rad:
+            axi.set_xlabel('$\gamma_{h}\ (\mu\mathrm{rad})$')
+        else:
+            axi.set_xlabel('$x$\ (pixel)')
         axi.set_xlim(*plim)
 
         axi = ax[3]
@@ -476,15 +497,22 @@ class SprFitSet:
         axi.spines['left'].set_visible(False)
         axi.spines['right'].set_visible(False)
         axi.spines['top'].set_visible(False)
-        axi.set_xlabel('$y$, pixel')
+        if rad:
+            axi.set_xlabel('$\gamma_{v}\ (\mu\mathrm{rad}$)')
+        else:
+            axi.set_xlabel('$y$\ (pixel)')
         axi.set_xlim(*plim)
        
 
-    def plot_center_distribution(self, bins, H, ranges=None, ax=None):
-        x, y = np.meshgrid(bins[0],bins[1])
+    def plot_center_distribution(self, bins, H, ranges=None, ax=None, rad=True):
+        x, y = np.meshgrid(bins[0],bins[1], indexing='ij')
 
-        plt.rc('text', usetex=True)
+        plt.rc('text', usetex=False)
         plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
 
         if ax is None:
             fig = plt.figure(figsize=(8,8))
@@ -509,10 +537,12 @@ class SprFitSet:
         cax = divider.append_axes("right", size="5%", pad=0.1)
         plt.colorbar(im, cax=cax)
         
-        #ax.set_xlabel("$\gamma_\mathrm{h}, \mu\mathrm{rad}$")
-        #ax.set_ylabel("$\gamma_\mathrm{v}, \mu\mathrm{rad}$")
-        ax.set_xlabel("$x, \mathrm{pixel}$")
-        ax.set_ylabel("$y, \mathrm{pixel}$")
+        if rad:
+            ax.set_xlabel("$\gamma_\mathrm{h}\ (\mu\mathrm{rad})$")
+            ax.set_ylabel("$\gamma_\mathrm{v}\ (\mu\mathrm{rad})$")
+        else:
+            ax.set_xlabel("$x\ (\mathrm{pixel})$")
+            ax.set_ylabel("$y\ (\mathrm{pixel})$")
         
         return im
         
@@ -538,8 +568,12 @@ class SprFitSet:
         
         #runs = np.linspace(self.runs[0]-0.5, self.runs[-1]+0.5, self.nrun+1)
         
-        plt.rc('text', usetex=True)
+        plt.rc('text', usetex=False)
         plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
 
         if ax is None:
             fig = plt.figure(figsize=(8,8))
@@ -557,9 +591,9 @@ class SprFitSet:
         ax.set_xlim(j[0], j[-1])
         
         ax.set_yticks(i[:-1]+0.5)
-        ax.set_yticklabels(ty, fontsize=14)
+        ax.set_yticklabels(ty, fontsize=12)
         ax.set_xticks(j[:-1]+0.5)
-        ax.set_xticklabels(tx, fontsize=14)
+        ax.set_xticklabels(tx, fontsize=12)
         ax.tick_params("x", labelrotation=90, bottom=False, top=True, labelbottom=False, labeltop=True)
         
         ax.set_xlabel(lx)
@@ -569,29 +603,58 @@ class SprFitSet:
 
 
     def plot_pulse_hist(self, ax, pi, k, lim):
+        plt.rc('text', usetex=False)
+        plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
+
+        ims = []
         for i in range(len(k)):
             ki = k[i]
 
             hI, bI = self.get_param_by_run(pi, 'cells', lim, logscale=True, k=ki)
             xx,yy = np.meshgrid(bI, np.arange(31)+0.5)
             axi = ax[i]
-            axi.pcolor(yy,xx,hI)
+            vmx = bI.max()
+            imi = axi.pcolor(yy,xx,hI)#, vmin=0, vmax=vmx)
             axi.set_yscale('log')
             axi.tick_params(labelleft=False)
             axi.set_xticks([1,10, 20, 30])
             axi.set_xlabel("pulse")
+            ims.append(imi)
+            
+            divi = make_axes_locatable(axi)
+            caxi = divi.append_axes("top", size="5%", pad=0.1)
+            cbar = plt.colorbar(imi, cax=caxi, orientation='horizontal')
+            caxi.xaxis.set_ticks_position('top')
+            caxi.axes.tick_params(labelsize=12)
+            if i == 0:
+                caxi.set_ylabel('fits', rotation='horizontal', labelpad=15, fontsize=12)
+
+            #cbar.ax.set_xticks([ti for ti in range(0,int(hI.max()),10)])
+            #cbar.ax.set_xticklabels([ti for ti in range(0,int(hI.max()),10)], fontsize=12)
+            #caxi.xaxis.set_ticks([0, vmx])
+
             #xi.add_line(plt.Line2D([0.5, 30.5], [90.]*2, c="C%d"%i, linewidth=8))
             #axi.set_ylim(Imn, 100)
 
         axi=ax[0]
         axi.tick_params(labelleft=True)
         axi.set_ylabel(self.lbl[pi-1])
+        
+        return ims
        
         
     def plot_IR_distribution(self, bR, bI, H, ax=None):
 
-        plt.rc('text', usetex=True)
+        plt.rc('text', usetex=False)
         plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
 
         if ax is None:
             fig = plt.figure(figsize=(8, 6))
@@ -614,6 +677,13 @@ class SprFitSet:
     
     def plot_param_by_run(self, bins, h, lbl, logscale=False, ax=None):
         
+        plt.rc('text', usetex=False)
+        plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
+
         #runs = np.linspace(self.runs[0]-0.5, self.runs[-1]+0.5, self.nrun+1)
         runs = np.linspace(0.5, self.nrun+0.5, self.nrun+1)
         hmn = np.min(h[h>0])
@@ -621,8 +691,9 @@ class SprFitSet:
         
         y, x = np.meshgrid(runs, bins, indexing='ij')
 
-        plt.rc('text', usetex=True)
-        plt.rc('font', family='serif', size=16)
+        plt.rc('text', usetex=False)
+        plt.rc('font', family='serif', size=14)
+        plt.rc('axes', labelsize = 12)
 
         if ax is None:
             fig = plt.figure(figsize=(16,4))
@@ -644,15 +715,19 @@ class SprFitSet:
         #ax.get_xaxis().set_minor_formatter(ScalarFormatter())
         
         ax.set_yticks(runs[:-1]+0.5)
-        ax.set_yticklabels(self.runs, fontsize=14)
+        ax.set_yticklabels(self.runs, fontsize=12)
         
         
 
     
     def plot_ntrains_by_nfit(self, mu, n, p, ax=None):
 
-        plt.rc('text', usetex=True)
+        plt.rc('text', usetex=False)
         plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
 
         if ax is None:
             fig = plt.figure(figsize=(8, 6))
@@ -663,13 +738,15 @@ class SprFitSet:
                
         i, = np.where(nn)
         
-        imx = np.where(pp > 0.75)[0][-1] + 1
+        #imx = np.where(pp > 0.75)[0][-1] + 1
         #imx = i.max() + 1
+        imx = 15
+        i = range(0,imx)
         j = range(0,imx)
         
-        ax.stem(i, nn[i], bottom=1, linefmt="C0", markerfmt="C0o")
+        ax.stem(i, nn[i], bottom=0, linefmt="C0", markerfmt="C0o", use_line_collection=True)
         ax.plot(j, pp[j], "C1P")
-        ax.set_yscale('log')
+        ax.set_yscale('symlog', linthreshy=1)
         
         ax.set_xticks(j)
         #ax.set_ylabel("trains")
@@ -678,15 +755,19 @@ class SprFitSet:
     def plot_nfit_by_pulse(self, ax=None):
         n = self.get_nfit_by_pulse()
 
-        plt.rc('text', usetex=True)
+        plt.rc('text', usetex=False)
         plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
 
         if ax is None:
             fig = plt.figure(figsize=(8, 6))
             ax = fig.gca()
         
         cells = np.arange(1,max(self.ncell)+1, dtype=int)
-        ax.stem(cells, n)
+        ax.stem(cells, n, use_line_collection=True)
         ax.set_xticks(cells)
         ax.set_xlabel("impulse")
         ax.set_ylabel("fits")
@@ -695,8 +776,11 @@ class SprFitSet:
         
         
     def plot_n_by_run(self, y, lbl=None, ax=None):
-        plt.rc('text', usetex=True)
         plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
         
         mrk = ('o', 's', 'v', '^', '<', '>')
         nmrk = len(mrk)
@@ -715,7 +799,7 @@ class SprFitSet:
                 l = lbl[j]
             else:
                 l = None
-            ax.stem(i, y[j], linefmt="C%d"%j, markerfmt="C%d"%j+mrk[j%nmrk], basefmt="None", label=l)
+            ax.stem(i, y[j], linefmt="C%d"%j, markerfmt="C%d"%j+mrk[j%nmrk], basefmt="None", label=l, use_line_collection=True)
             m = np.max(y[j])
             vmx = max(m, vmx)
         
@@ -733,8 +817,12 @@ class SprFitSet:
         #ax.set_ylim(-0.1 * vmx, vmx*1.1)
 
     def plot_fit_ratio_by_run(self, ax=None):
-        plt.rc('text', usetex=True)
+        plt.rc('text', usetex=False)
         plt.rc('font', family='serif', size=16)
+        plt.rc('xtick', labelsize=14)
+        plt.rc('ytick', labelsize=14)
+        plt.rc('axes', labelsize=16)
+        plt.rc('axes', titlesize=16)
 
         if ax is None:
             fig = plt.figure(figsize=(10, 6))
@@ -742,7 +830,7 @@ class SprFitSet:
         
         r = 100.*np.array(self.nfit) / np.array(self.nhit)
         i = np.arange(len(self.runs)) + np.array(self.grps)
-        ax.stem(i, r)
+        ax.stem(i, r, use_line_collection=True)
         ax.set_xticks(i)
         ax.set_xticklabels(self.runs)
         ax.set_xlabel("run")

@@ -1,3 +1,5 @@
+# Author: Egor Sobolev (https://github.com/egorsobolev)
+
 import numpy as np
 
 re = 2.8e-5 # classiacal electron radius 2.8e-5 A

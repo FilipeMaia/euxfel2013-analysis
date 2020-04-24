@@ -1,3 +1,5 @@
+# Author: Egor Sobolev (https://github.com/egorsobolev)
+
 import math
 import numpy as np
 from scipy.optimize import minimize
@@ -31,7 +33,7 @@ class SprModel:
         self.ei2 = (ei * ei).reshape(self.n, 1)
 
         self.z = np.zeros([self.n, 1], dtype=float)
-        self.p = np.array([float("nan")] * 6)
+        self.p = np.array([float("nan")] * 4)
         self.L = None
         self.dL = None
         self.d2L = None
@@ -120,63 +122,30 @@ class SprModel:
 
         return I, dI, d2I
 
-
-    def likelihood_gauss_stab(self, b0, ec, I, dI, d2I):
-        m = dI.shape[1] + 2
+    def likelihood_gauss_stab(self, I, dI, d2I):
+        m = dI.shape[1]
                      
-        lmd = np.abs(I) + np.abs(ec) * self.bi
+        lmd = np.abs(I) 
         
-        s2 = lmd + self.si2 + self.ei2 #ec*ec*self.ei2
+        e2 = self.ei2
+        s2 = lmd + self.si2 + e2
         
-        A = lmd + b0 - self.vi
+        A = lmd + self.bi - self.vi
         S = s2
         
-#        B = 0.5 / S
-#        C = 0.5 * (1. - A*A / S)
-#        D = (A + C) / S
-        
-#        AS = A/S
-        
-         
-        #E = 2.* ec * self.ei2
-#        E = 0.
-        
-#        L = 0.5 * np.mean(A*A/S + np.log(2. * math.pi * S), 0)
-        
-#        dSda = self.bi + E        
-#        dLda = D * self.bi + (C / S) * E 
-        
-#        dL = np.mean(np.hstack([AS, dLda, D * dI]), 0)
-
-#        d2Ld12 = (self.bi - AS * dSda) / S
-#        d2Ld13 = (1. - AS) / S * dI
-        
-        #d2Ld22 = (2. * C * self.ei2 + self.bi*self.bi + (B * dSda - 2.*dLda) * dSda) / S
-#        d2Ld22 = (self.bi*self.bi + (B * dSda - 2.*dLda) * dSda) / S
-#        d2Ld23 = (self.bi - dLda + (B - D) * dSda) / S * dI
-
-#        d2Ld33 = D * d2I + (1. + B - 2.*D) / S * dsymaa(dI)
-        
-#        d2L = np.mean(np.hstack([1./S, d2Ld12, d2Ld13, d2Ld22, d2Ld23, d2Ld33]), 0)
         
         
         B = A / s2
         C = 1. / s2
         B1 = 1. - B
-        D = (C - B*B) * self.ei2
-       
+        
         L = 0.5 * np.mean(A * B + np.log(2. * math.pi * s2), 0)
         
         dLdI = B * (1. - 0.5 * B) + 0.5 * C        
         d2LdI2 = (B1 * B1 - 0.5 * C) * C * dsymaa(dI) + dLdI * d2I
         
-        dLde = D * ec
-        d2Lda2 = (B1 * B1 - 0.5 * C) * C * self.bi * self.bi
-        
-        d2L = np.mean(np.hstack([C, C * B1 * self.bi + D, C * B1 * dI,
-                                 d2Lda2, self.bi * C * B1 * dI,
-                                 d2LdI2]), 0)
-        dL = np.mean(np.hstack([B, dLdI*self.bi + D*ec, dLdI * dI]), 0)
+        d2L = np.mean(d2LdI2, 0)
+        dL = np.mean(dLdI * dI, 0)
 
         idx = np.zeros([m, m], dtype=int)
         idx[np.triu_indices(m)] = range(d2L.size)
@@ -185,10 +154,10 @@ class SprModel:
         return L, dL, d2L[idx]
 
     def residuals(self, b0, ec, I):
-        return (I + b0 + ec * self.bi - self.vi) / np.sqrt(I + self.si2)
+        return (I + b0 + ec * self.bi - self.vi) / np.sqrt(I + self.si2 + self.ei2)
     
     def chi2(self, b0, ec, I):
-        s2 = I + self.si2 + ec*self.ei2
+        s2 = I + self.si2 + self.ei2*ec*ec
         d = (I + b0 + ec * self.bi - self.vi)
         Chi2 = d * d / s2
         
@@ -197,10 +166,11 @@ class SprModel:
     def _recompute(self, pk, process="gauss-stab"):
         pn = np.array(pk)
         if self.p.size != np.size or np.any(pn != self.p):
-            b0, ec, I0, R, x0, y0 = pk
+            #b0, ec, 
+            I0, R, x0, y0 = pk
             I, dI, d2I = self.model(np.abs(I0), R, x0, y0)
             if process=="gauss-stab":
-                self.L, self.dL, self.d2L = self.likelihood_gauss_stab(b0, ec, I, dI, d2I)
+                self.L, self.dL, self.d2L = self.likelihood_gauss_stab(I, dI, d2I)
             else:
                 raise(ValueError())
             self.p = pn
@@ -225,17 +195,17 @@ class SprModel:
         fhess = lambda x, m: m.hess(x)
 
         res = minimize(fobj, xinit, self, 'trust-exact', jac=fjac, hess=fhess,
-                       options={'gtol': tol})
+                       options={'gtol': tol, 'maxiter': 500})
 
         v, w = np.linalg.eigh(res.hess)
         
         res.positive = np.all(v > 0.)
         res.corr = np.matmul((w / v), w.T) / (self.n - res.x.size)
         
-        b0, ec, I0, R, x, y = res.x
+        I0, R, x, y = res.x
 
         I = self.model(I0, R, x, y)[0]
-        res.gof = self.chi2(b0, ec, I)
+        res.gof = self.chi2(0, 1, I)
         
         return res
 
